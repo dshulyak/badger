@@ -32,6 +32,8 @@ import (
 	"github.com/dgraph-io/badger/v2/options"
 	"github.com/dgraph-io/badger/v2/y"
 	"github.com/dgraph-io/ristretto"
+	"github.com/dshulyak/uring/fs"
+	"github.com/dshulyak/uring/queue"
 	"github.com/stretchr/testify/require"
 )
 
@@ -806,7 +808,7 @@ func BenchmarkReadMerged(b *testing.B) {
 	require.NoError(b, err)
 
 	for i := 0; i < m; i++ {
-		filename := fmt.Sprintf("%s%s%d.sst", os.TempDir(), string(os.PathSeparator), rand.Int63())
+		filename := fmt.Sprintf("%s%s%d.sst", os.TempDir(), string(os.PathSeparator), rand.Int31())
 		opts := Options{Compression: options.ZSTD, BlockSize: 4 * 1024, BloomFalsePositive: 0.01}
 		opts.Cache = cache
 		builder := NewTableBuilder(opts)
@@ -894,7 +896,15 @@ func BenchmarkRandomRead(b *testing.B) {
 
 func getTableForBenchmarks(b *testing.B, count int, cache *ristretto.Cache) *Table {
 	rand.Seed(time.Now().Unix())
-	opts := Options{Compression: options.ZSTD, BlockSize: 4 * 1024, BloomFalsePositive: 0.01}
+	queue, err := queue.Setup(1024, nil, nil)
+	require.NoError(b, err)
+	b.Cleanup(func() { _ = queue.Close() })
+
+	opts := Options{Compression: options.ZSTD, BlockSize: 4 * 1024,
+		BloomFalsePositive: 0.01,
+		UringFS:            fs.NewFilesystem(queue),
+		LoadingMode:        options.Uring,
+	}
 	if cache == nil {
 		var err error
 		cache, err = ristretto.NewCache(&cacheConfig)
@@ -902,7 +912,7 @@ func getTableForBenchmarks(b *testing.B, count int, cache *ristretto.Cache) *Tab
 	}
 	opts.Cache = cache
 	builder := NewTableBuilder(opts)
-	filename := fmt.Sprintf("%s%s%d.sst", os.TempDir(), string(os.PathSeparator), rand.Int63())
+	filename := fmt.Sprintf("%s%s%d.sst", os.TempDir(), string(os.PathSeparator), rand.Int31())
 	f, err := y.OpenSyncedFile(filename, true)
 	require.NoError(b, err)
 	for i := 0; i < count; i++ {

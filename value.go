@@ -41,6 +41,7 @@ import (
 	"github.com/dgraph-io/badger/v2/options"
 	"github.com/dgraph-io/badger/v2/pb"
 	"github.com/dgraph-io/badger/v2/y"
+	"github.com/dshulyak/uring/fs"
 	"github.com/pkg/errors"
 	"golang.org/x/net/trace"
 )
@@ -77,6 +78,7 @@ type logFile struct {
 	// Use shared ownership when reading/writing the file or memory map, use
 	// exclusive ownership to open/close the descriptor, unmap or remove the file.
 	lock        sync.RWMutex
+	ufd         *fs.File
 	fd          *os.File
 	fid         uint32
 	fmap        []byte
@@ -85,6 +87,8 @@ type logFile struct {
 	dataKey     *pb.DataKey
 	baseIV      []byte
 	registry    *KeyRegistry
+
+	ufs *fs.Filesystem
 }
 
 // encodeEntry will encode entry to the buf
@@ -219,6 +223,11 @@ func (lf *logFile) read(p valuePointer, s *y.Slice) (buf []byte, err error) {
 		buf = s.Resize(int(p.Len))
 		var n int
 		n, err = lf.fd.ReadAt(buf, int64(offset))
+		nbr = int64(n)
+	} else if lf.loadingMode == options.Uring {
+		buf = s.Resize(int(p.Len))
+		var n int
+		n, err = lf.ufd.ReadAt(buf, int64(offset))
 		nbr = int64(n)
 	} else {
 		// Do not convert size to uint32, because the lf.fmap can be of size
@@ -783,6 +792,12 @@ func (vlog *valueLog) deleteLogFile(lf *logFile) error {
 		return err
 	}
 	lf.fmap = nil
+	if lf.ufd != nil {
+		if err := lf.ufd.Close(); err != nil {
+			return err
+		}
+		lf.ufd = nil
+	}
 	if err := lf.fd.Close(); err != nil {
 		return err
 	}
@@ -887,6 +902,7 @@ func (vlog *valueLog) populateFilesMap() error {
 			path:        vlog.fpath(uint32(fid)),
 			loadingMode: vlog.opt.ValueLogLoadingMode,
 			registry:    vlog.db.registry,
+			ufs:         vlog.opt.UringFS,
 		}
 		vlog.filesMap[uint32(fid)] = lf
 		if vlog.maxFid < uint32(fid) {
@@ -900,6 +916,11 @@ func (lf *logFile) open(path string, flags uint32) error {
 	var err error
 	if lf.fd, err = y.OpenExistingFile(path, flags); err != nil {
 		return y.Wrapf(err, "Error while opening file in logfile %s", path)
+	}
+	if lf.loadingMode == options.Uring {
+		if lf.ufd, err = lf.ufs.Open(path, os.O_RDONLY, 0); err != nil {
+			return y.Wrapf(err, "failed to open uring file %s", path)
+		}
 	}
 
 	fi, err := lf.fd.Stat()
@@ -983,6 +1004,7 @@ func (vlog *valueLog) createVlogFile(fid uint32) (*logFile, error) {
 		path:        path,
 		loadingMode: vlog.opt.ValueLogLoadingMode,
 		registry:    vlog.db.registry,
+		ufs:         vlog.opt.UringFS,
 	}
 	// writableLogOffset is only written by write func, by read by Read func.
 	// To avoid a race condition, all reads and updates to this variable must be
@@ -990,6 +1012,11 @@ func (vlog *valueLog) createVlogFile(fid uint32) (*logFile, error) {
 	var err error
 	if lf.fd, err = y.CreateSyncedFile(path, vlog.opt.SyncWrites); err != nil {
 		return nil, errFile(err, lf.path, "Create value log file")
+	}
+	if lf.loadingMode == options.Uring {
+		if lf.ufd, err = lf.ufs.Open(path, os.O_RDONLY, 0); err != nil {
+			return nil, err
+		}
 	}
 
 	if err = lf.bootstrap(); err != nil {
@@ -1146,6 +1173,11 @@ func (vlog *valueLog) open(db *DB, ptr valuePointer, replayFn logEntry) error {
 				// Close the fd of the file before deleting the file otherwise windows complaints.
 				if err := lf.fd.Close(); err != nil {
 					return errors.Wrapf(err, "failed to close vlog file %s", lf.fd.Name())
+				}
+				if lf.ufd != nil {
+					if err := lf.ufd.Close(); err != nil {
+						return err
+					}
 				}
 				path := vlog.fpath(lf.fid)
 				if err := os.Remove(path); err != nil {

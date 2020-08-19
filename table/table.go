@@ -40,6 +40,8 @@ import (
 	"github.com/dgraph-io/badger/v2/y"
 	"github.com/dgraph-io/ristretto"
 	"github.com/dgraph-io/ristretto/z"
+
+	"github.com/dshulyak/uring/fs"
 )
 
 const fileSuffix = ".sst"
@@ -81,6 +83,8 @@ type Options struct {
 	// When LoadBloomsOnOpen is set, bloom filters will be read only when they are accessed.
 	// Otherwise they will be loaded on table open.
 	LoadBloomsOnOpen bool
+
+	UringFS *fs.Filesystem
 }
 
 // TableInterface is useful for testing.
@@ -94,6 +98,7 @@ type TableInterface interface {
 type Table struct {
 	sync.Mutex
 
+	ufd       *fs.File
 	fd        *os.File // Own fd.
 	tableSize int      // Initialized in OpenTable, using fd.Stat().
 
@@ -140,6 +145,10 @@ func (t *Table) DecrRef() error {
 				return err
 			}
 			t.mmap = nil
+		} else if t.opt.LoadingMode == options.Uring {
+			if err := t.ufd.Close(); err != nil {
+				return err
+			}
 		}
 		// fd can be nil if the table belongs to L0 and it is opened in memory. See
 		// OpenTableInMemory method.
@@ -241,6 +250,12 @@ func OpenTable(fd *os.File, opts Options) (*Table, error) {
 			_ = fd.Close()
 			return nil, y.Wrapf(err, "Unable to map file: %q", fileInfo.Name())
 		}
+	case options.Uring:
+		t.ufd, err = opts.UringFS.Open(fd.Name(), os.O_RDONLY, fileInfo.Mode())
+		if err != nil {
+			_ = fd.Close()
+			return nil, y.Wrapf(err, "failed to open fd using uring: %q", fileInfo.Name())
+		}
 	case options.FileIO:
 		t.mmap = nil
 	default:
@@ -304,6 +319,10 @@ func (t *Table) Close() error {
 			return err
 		}
 		t.mmap = nil
+	} else if t.opt.LoadingMode == options.Uring {
+		if err := t.ufd.Close(); err != nil {
+			return err
+		}
 	}
 	if t.fd == nil {
 		return nil
@@ -319,8 +338,19 @@ func (t *Table) read(off, sz int) ([]byte, error) {
 		return t.mmap[off : off+sz], nil
 	}
 
+	var (
+		nbr int
+		err error
+	)
 	res := make([]byte, sz)
-	nbr, err := t.fd.ReadAt(res, int64(off))
+	if t.opt.LoadingMode == options.Uring {
+		nbr, err = t.ufd.ReadAt(res, int64(off))
+		if nbr == 0 && err == nil {
+			err = io.EOF
+		}
+	} else {
+		nbr, err = t.fd.ReadAt(res, int64(off))
+	}
 	y.NumReads.Add(1)
 	y.NumBytesRead.Add(int64(nbr))
 	return res, err

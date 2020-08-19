@@ -212,7 +212,7 @@ func Open(opt Options) (db *DB, err error) {
 		return nil, ErrValueLogSize
 	}
 	if !(opt.ValueLogLoadingMode == options.FileIO ||
-		opt.ValueLogLoadingMode == options.MemoryMap) {
+		opt.ValueLogLoadingMode == options.MemoryMap || opt.ValueLogLoadingMode == options.Uring) {
 		return nil, ErrInvalidLoadingMode
 	}
 

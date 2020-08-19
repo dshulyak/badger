@@ -27,6 +27,8 @@ const (
 	LoadToRAM
 	// MemoryMap indicates that that the file must be memory-mapped
 	MemoryMap
+	// Uring indicates that fille will be read using io_uring.
+	Uring
 )
 
 // ChecksumVerificationMode tells when should DB verify checksum for SSTable blocks.

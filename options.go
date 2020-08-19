@@ -21,6 +21,7 @@ import (
 
 	"github.com/dgraph-io/badger/v2/options"
 	"github.com/dgraph-io/badger/v2/table"
+	"github.com/dshulyak/uring/fs"
 )
 
 // Note: If you add a new option X make sure you also add a WithX method on Options.
@@ -99,6 +100,8 @@ type Options struct {
 	// Not recommended for most users.
 	managedTxns bool
 
+	UringFS *fs.Filesystem
+
 	// 4. Flags for testing purposes
 	// ------------------------------
 	maxBatchCount int64 // max entries in batch
@@ -172,6 +175,7 @@ func buildTableOptions(opt Options) table.Options {
 		ChkMode:              opt.ChecksumVerificationMode,
 		Compression:          opt.Compression,
 		ZSTDCompressionLevel: opt.ZSTDCompressionLevel,
+		UringFS:              opt.UringFS,
 	}
 }
 

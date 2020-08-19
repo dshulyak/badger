@@ -24,6 +24,8 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/dshulyak/uring/fs"
+	"github.com/dshulyak/uring/queue"
 	humanize "github.com/dustin/go-humanize"
 	"github.com/spf13/cobra"
 
@@ -66,7 +68,7 @@ func init() {
 		&readOnly, "read-only", true, "If true, DB will be opened in read only mode.")
 	readBenchCmd.Flags().StringVar(
 		&loadingMode, "loading-mode", "mmap", "Mode for accessing SSTables and value log files. "+
-			"Valid loading modes are fileio and mmap.")
+			"Valid loading modes are fileio, mmap and uring.")
 }
 
 func readBench(cmd *cobra.Command, args []string) error {
@@ -79,7 +81,14 @@ func readBench(cmd *cobra.Command, args []string) error {
 	y.AssertTrue(numGoroutines > 0)
 	mode := getLoadingMode(loadingMode)
 
-	db, err := badger.Open(badger.DefaultOptions(sstDir).
+	queue, err := queue.Setup(1024, nil, nil)
+	if err != nil {
+		return y.Wrapf(err, "failed to setup queue")
+	}
+	defer queue.Close()
+	opts := badger.DefaultOptions(sstDir)
+	opts.UringFS = fs.NewFilesystem(queue)
+	db, err := badger.Open(opts.
 		WithValueDir(vlogDir).
 		WithReadOnly(readOnly).
 		WithTableLoadingMode(mode).
@@ -108,6 +117,7 @@ func readBench(cmd *cobra.Command, args []string) error {
 	fmt.Println("*********************************************************")
 	c := y.NewCloser(0)
 	startTime = time.Now()
+
 	for i := 0; i < numGoroutines; i++ {
 		c.AddRunning(1)
 		go readKeys(db, c, keys)
@@ -232,6 +242,8 @@ func getLoadingMode(m string) options.FileLoadingMode {
 		mode = options.FileIO
 	case "mmap":
 		mode = options.MemoryMap
+	case "uring":
+		mode = options.Uring
 	default:
 		panic("loading mode not supported")
 	}

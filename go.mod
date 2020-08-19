@@ -7,6 +7,7 @@ require (
 	github.com/cespare/xxhash v1.1.0
 	github.com/dgraph-io/ristretto v0.0.2-0.20200115201040-8f368f2f2ab3
 	github.com/dgryski/go-farm v0.0.0-20190423205320-6a90982ecee2
+	github.com/dshulyak/uring v0.0.0-20200818092426-a2cc62e9d63c
 	github.com/dustin/go-humanize v1.0.0
 	github.com/golang/protobuf v1.3.1
 	github.com/golang/snappy v0.0.1
@@ -14,8 +15,8 @@ require (
 	github.com/pkg/errors v0.8.1
 	github.com/spaolacci/murmur3 v1.1.0 // indirect
 	github.com/spf13/cobra v0.0.5
-	github.com/stretchr/testify v1.4.0
+	github.com/stretchr/testify v1.6.1
 	golang.org/x/net v0.0.0-20190620200207-3b0461eec859
-	golang.org/x/sys v0.0.0-20190626221950-04f50cda93cb
+	golang.org/x/sys v0.0.0-20200814200057-3d37ad5750ed
 	gopkg.in/check.v1 v1.0.0-20190902080502-41f04d3bba15 // indirect
 )
